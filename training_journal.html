@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Тренувальний Щоденник</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #f5f5f5; padding: 20px; }
+    h1 { color: #333; }
+    select, input, textarea, button {
+      font-size: 16px; margin: 5px 0; padding: 8px; width: 100%; }
+    input[type="date"] { padding: 6px; }
+    .exercise-block { background: #fff; padding: 10px; border-radius: 8px; margin-bottom: 15px; box-shadow: 0 0 5px rgba(0,0,0,0.1); }
+    .exercise-block[draggable="true"] { cursor: move; }
+    .label { font-weight: bold; margin-top: 10px; }
+    .color-buttons button {
+      width: 30px; height: 30px; border: none; border-radius: 50%; margin: 0 3px; cursor: pointer;
+    }
+    .green { background: #6fcf97; }
+    .orange { background: #ffe066; }
+    .red { background: #eb5757; }
+    .set-row { display: flex; gap: 10px; align-items: center; margin-bottom: 5px; }
+    .set-row input[type="number"] { width: 30%; }
+    .set-row .intensity-buttons { display: flex; gap: 5px; }
+  </style>
+</head>
+<body>
+  <h1>Тренувальний Щоденник</h1>
+
+  <label for="training-date">Дата тренування:</label>
+  <input type="date" id="training-date" onchange="loadDayFromDate()" />
+
+  <label for="training-day">День тренування:</label>
+  <select id="training-day" onchange="renderExercises()">
+    <option value="DAY1">DAY1</option>
+    <option value="DAY2">DAY2</option>
+    <option value="DAY3">DAY3</option>
+    <option value="DAY4">DAY4</option>
+  </select>
+
+  <label for="custom-exercises">Редагувати вправи (через кому):</label>
+  <input type="text" id="custom-exercises" placeholder="Наприклад: Присідання, Випади, Пулловер" onchange="updateCustomExercises()" />
+
+  <div id="exercises" ondragover="event.preventDefault()"></div>
+
+  <button onclick="saveData()">💾 Зберегти тренування</button>
+  <button onclick="toggleDebug()">🐞 Показати/приховати JSON</button>
+  <pre id="output" style="display: none;"></pre>
+
+  <script>
+  const endpoint = "https://script.google.com/macros/s/AKfycbwurpYpliiYO6IM8KOxRWXzB2xhhMvCfPTppfViaQ8SSgyZCsZt6EPg7HQqi6l5FLNG/exec";
+
+  const exerciseTemplates = {
+    DAY1: ["Кішка-корова", "Скручування на прес", "Підйом таза (hip thrust)", "Присідання зі штангою (низький/середній хват)", "Румунська мертва тяга зі штангою", "Болгарські присідання з гантелями", "Гудморнінги зі штангою", "Планка на ліктях", "Вакуум живота стоячи"],
+    DAY2: ["Кішка-корова", "Скручування на прес", "Підйом таза (hip thrust)", "Тяга штанги в нахилі", "Тяга гантелі в нахилі", "Супермен на підлозі", "Arnold’s Rear Delt Raise", "Згинання на біцепс (штанга)", "Молоток (Hammer Curl)", "Зворотні віджимання на лавці (трицепс)", "Згинання зап’ясть з гантелями для передпліч"],
+    DAY3: ["Кішка-корова", "Скручування на прес", "Підйом таза (hip thrust)", "Фронтальні присідання зі штангою", "Станова тяга із сумо-розстановкою", "Випади назад з гантелями", "Підйоми на носки стоячи зі штангою (ікри)", "Бічна планка", "Ножиці лежачи"],
+    DAY4: ["Кішка-корова", "Скручування на прес", "Підйом таза (hip thrust)", "Флор-прес гантелями (лежачи на підлозі)", "Розведення гантелей лежачи на лавці", "Пулловер з гантеллю лежачи", "Французський жим", "Віджимання від лавки вузьким хватом", "Статичне утримання гантелі перед грудьми", "Згинання гантелей на біцепс", "Згинання зап’ясть з гантелями прямим хватом"]
+  };
+
+  let draggedIndex = null;
+
+  function toggleDebug() {
+    const out = document.getElementById("output");
+    out.style.display = out.style.display === "none" ? "block" : "none";
+  }
+
+  function updateCustomExercises() {
+    const day = document.getElementById("training-day").value;
+    const customList = document.getElementById("custom-exercises").value.split(',').map(e => e.trim()).filter(e => e);
+    if (customList.length > 0) {
+      exerciseTemplates[day] = customList;
+      localStorage.setItem(`exercises-${day}`, JSON.stringify(customList));
+      renderExercises();
+    }
+  }
+
+  function loadTemplatesFromStorage() {
+    ["DAY1", "DAY2", "DAY3", "DAY4"].forEach(day => {
+      const saved = localStorage.getItem(`exercises-${day}`);
+      if (saved) {
+        exerciseTemplates[day] = JSON.parse(saved);
+      }
+    });
+  }
+
+  function loadDayFromDate() {
+    const date = document.getElementById("training-date").value;
+    const possibleDays = ["DAY1", "DAY2", "DAY3", "DAY4"];
+    for (let day of possibleDays) {
+      if (localStorage.getItem(`training-${day}-${date}`)) {
+        document.getElementById("training-day").value = day;
+        renderExercises();
+        return;
+      }
+    }
+    renderExercises();
+  }
+
+  function dragStart(event) {
+    draggedIndex = event.currentTarget.getAttribute("data-index");
+  }
+
+  function drop(event) {
+    event.preventDefault();
+    const targetIndex = event.currentTarget.getAttribute("data-index");
+    const day = document.getElementById("training-day").value;
+
+    const list = [...exerciseTemplates[day]];
+    const [moved] = list.splice(draggedIndex, 1);
+    list.splice(targetIndex, 0, moved);
+
+    exerciseTemplates[day] = list;
+    localStorage.setItem(`exercises-${day}`, JSON.stringify(list));
+    renderExercises();
+  }
+
+  function renderExercises() {
+    const day = document.getElementById("training-day").value;
+    const date = document.getElementById("training-date").value || new Date().toLocaleDateString();
+    const container = document.getElementById("exercises");
+    container.innerHTML = "";
+
+    const saved = localStorage.getItem(`training-${day}-${date}`);
+    let exercisesList = [];
+    try {
+      const parsed = saved ? JSON.parse(saved) : null;
+      if (parsed && Array.isArray(parsed.exercises) && parsed.exercises.every(e => e?.name)) {
+        exercisesList = parsed.exercises.map(e => e.name);
+      } else {
+        const fallback = localStorage.getItem(`exercises-${day}`);
+        exercisesList = fallback ? JSON.parse(fallback) : exerciseTemplates[day];
+      }
+    } catch (err) {
+      exercisesList = exerciseTemplates[day];
+    }
+
+    exerciseTemplates[day] = exercisesList;
+    document.getElementById("custom-exercises").value = exercisesList.join(", ");
+
+    exercisesList.forEach((exercise, index) => {
+      const block = document.createElement("div");
+      block.className = "exercise-block";
+      block.setAttribute("draggable", true);
+      block.setAttribute("data-index", index);
+      block.ondragstart = dragStart;
+      block.ondrop = drop;
+
+      let setsHTML = "";
+      for (let s = 1; s <= 4; s++) {
+        setsHTML += `
+          <div class="set-row">
+            <label>Підхід ${s}:</label>
+            <input type="number" id="weight-${index}-${s}" placeholder="Вага" />
+            <input type="number" id="reps-${index}-${s}" placeholder="Повтори" />
+            <div class="intensity-buttons">
+              <button class="green" onclick="mark('${index}-${s}', '🟢')"></button>
+              <button class="orange" onclick="mark('${index}-${s}', '🟡')"></button>
+              <button class="red" onclick="mark('${index}-${s}', '🔴')"></button>
+              <span id="intensity-${index}-${s}" style="margin-left:10px;"></span>
+            </div>
+          </div>`;
+      }
+
+      block.innerHTML = `
+        <div class="label">${exercise}</div>
+        ${setsHTML}
+        <label>Примітка:</label><textarea id="note-${index}"></textarea>
+      `;
+      container.appendChild(block);
+    });
+
+    loadData();
+  }
+
+  function mark(id, symbol) {
+    document.getElementById(`intensity-${id}`).textContent = symbol;
+  }
+
+  function saveData() {
+    const day = document.getElementById("training-day").value;
+    const date = document.getElementById("training-date").value || new Date().toLocaleDateString();
+    const result = { day, date, exercises: [] };
+
+    exerciseTemplates[day].forEach((exercise, i) => {
+      const sets = [];
+      for (let s = 1; s <= 4; s++) {
+        sets.push({
+          weight: document.getElementById(`weight-${i}-${s}`).value,
+          reps: document.getElementById(`reps-${i}-${s}`).value,
+          intensity: document.getElementById(`intensity-${i}-${s}`).textContent
+        });
+      }
+      result.exercises.push({
+        name: exercise,
+        sets: sets,
+        note: document.getElementById(`note-${i}`).value
+      });
+    });
+
+    localStorage.setItem(`training-${day}-${date}`, JSON.stringify(result));
+    document.getElementById("output").textContent = JSON.stringify(result, null, 2);
+
+    fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(result)
+    })
+    .then(res => res.text())
+    .then(msg => console.log("Відповідь від Google Sheets:", msg))
+    .catch(err => console.error("Помилка надсилання:", err));
+  }
+
+  function loadData() {
+    const day = document.getElementById("training-day").value;
+    const date = document.getElementById("training-date").value || new Date().toLocaleDateString();
+    const saved = localStorage.getItem(`training-${day}-${date}`);
+    if (!saved) return;
+
+    const data = JSON.parse(saved);
+    data.exercises.forEach((exercise, i) => {
+      exercise.sets.forEach((set, s) => {
+        document.getElementById(`weight-${i}-${s + 1}`).value = set.weight;
+        document.getElementById(`reps-${i}-${s + 1}`).value = set.reps;
+        document.getElementById(`intensity-${i}-${s + 1}`).textContent = set.intensity;
+      });
+      document.getElementById(`note-${i}`).value = exercise.note;
+    });
+    document.getElementById("output").textContent = JSON.stringify(data, null, 2);
+  }
+
+  loadTemplatesFromStorage();
+  renderExercises();
+</script>
+
+</body>
+</html>
